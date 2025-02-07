@@ -17,78 +17,11 @@
 	Version: 1.1
 #>
 
-function Invoke-UploadTenantDataToBlobStorage {
-    [CmdletBinding()]
-    param (
-      [Parameter(Mandatory = $true)]
-      [ValidateScript({ -not ([string]::IsNullOrWhiteSpace($_)) })]
-      [string]$AccountName,
-  
-      [Parameter(Mandatory = $true)]
-      [ValidateScript({ -not ([string]::IsNullOrWhiteSpace($_)) })]
-      [string]$ContainerName,
-  
-      [Parameter(Mandatory = $true)]
-      [ValidateScript({ $_ -ne $null })]
-      [PSCustomObject]$TenantData,
-  
-      [Parameter(Mandatory = $true)]
-      [ValidateScript({ -not ([string]::IsNullOrWhiteSpace($_)) })]
-      [string]$SasToken
-      
-    )
-  
-    begin {
-      $output = New-Object System.Collections.Generic.List[PSCustomObject]
-      $blobName = $file
-  
-      $csvData = $TenantData | ConvertTo-Csv -NoTypeInformation
-      $csvData = $csvData -replace '"', ''
-      $bytes = [System.Text.Encoding]::UTF8.GetBytes($csvData -join "`n")
-  
-      $url = "https://saservicemanagerdata.blob.core.windows.net/customerdata/$($blobName)$SasToken"
-  
-      $headers = @{
-        "x-ms-blob-type"         = "BlockBlob"
-        "x-ms-blob-content-type" = "application/octet-stream"
-      }
-    }
-  
-    process {
-      $response = Invoke-WebRequest -Uri $url -Method Put -Headers $headers -Body $bytes -ContentType "application/octet-stream" -ErrorAction SilentlyContinue
-  
-      if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) {
-        $output.Add([PSCustomObject]@{
-            AccountName   = $AccountName
-            ContainerName = $ContainerName
-            BlobName      = $blobName
-            Uploaded      = $true
-            StatusCode    = $response.StatusCode
-            Message       = "Successfully uploaded"
-          })
-      }
-      else {
-        $output.Add([PSCustomObject]@{
-            AccountName   = $AccountName
-            ContainerName = $ContainerName
-            BlobName      = $blobName
-            Uploaded      = $false
-            StatusCode    = $response.StatusCode
-            Message       = "Failed to upload"
-          })
-      }
-    }
-    end {
-        return $output
-      }
-    }
-
 Install-Module -Name MicrosoftTeams -Force -AllowClobber -Scope CurrentUser -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -InformationAction SilentlyContinue
 Connect-MicrosoftTeams
 
 #Customer Domain
 [string]$verifiedDomain = (Get-CsTenant | Select -ExpandProperty VerifiedDomains | Where { $_.Name -like "*.onmicrosoft.com" -and $_.Name -notlike "*.mail.onmicrosoft.com" }).Name
-
 
 #User Counts
 $Users = Get-CsOnlineUser | Select-Object AccountEnabled, EnterpriseVoiceEnabled, OnlineVoiceRoutingPolicy, LineUri,identity, DisplayName, TeamsIPPhonePolicy
@@ -110,10 +43,11 @@ $autoAttendantData = Get-CsAutoAttendant -WarningAction SilentlyContinue
 $CAPPolicies = (Get-CsTeamsIPPhonePolicy | where { $_.signinmode -eq "CommonAreaPhoneSignIn" }).identity.replace('Tag:','')
 
 # count CAPs
+$CAPs = 0
 if ($CAPPolicies) {
         foreach ($policy in $CAPPolicies) {
-            Get-CsOnlineUser | where { $_.TeamsIPPhonePolicy -match $policy } | ForEach-Object {
-            $CAPs.Add($_)
+            $Users | where { $_.TeamsIPPhonePolicy -match $policy } | ForEach-Object {
+            $CAPs ++
           }
         }
 }
@@ -137,12 +71,14 @@ $Export = @{
         CallingPlanAssigned = $activeLicensedUsersWithCallingPlans
         OperatorConnectNumbers = $activeOperatorConnectDDIs
         OperatorConnectAssigned = $activeLicensedUsersWithOperatorConnect
-        CommonAreaPhones = $CAPs.count
+        CommonAreaPhones = $CAPs
         CallQueues    = $callQueueData.Length
         AutoAttendants = $autoAttendantData.Length
       }
 
-      $Export
+foreach ($key in $Export.Keys) {
+    Write-Output "$key $($Export[$key])"
+}
 
 #Export upload to blob
 $file = $verifiedDomain.Substring(0, $verifiedDomain.Length -16) + ".csv"
@@ -150,4 +86,22 @@ $file = $verifiedDomain.Substring(0, $verifiedDomain.Length -16) + ".csv"
 $token = Read-Host "Please Enter The SAS Token"
 $sas = "?sv=2022-11-02&ss=bf&srt=co&sp=rwdlaciytfx&se=2025-05-01T00:23:50Z&st=2023-11-28T17:23:50Z&spr=https&sig=" + $token
 
-Invoke-UploadTenantDataToBlobStorage -TenantData $Export -AccountName "saservicemanagerdata" -ContainerName "customerdata" -SasToken $sas
+$csvData = $Export.GetEnumerator() | select Key, Value | ConvertTo-Csv -NoTypeInformation
+      $csvData = $csvData -replace '"', ''
+      $bytes = [System.Text.Encoding]::UTF8.GetBytes($csvData -join "`n")
+  
+      $url = "https://saservicemanagerdata.blob.core.windows.net/customerdata/$($file)$sas"
+  
+      $headers = @{
+        "x-ms-blob-type"         = "BlockBlob"
+        "x-ms-blob-content-type" = "application/octet-stream"
+      }
+
+      $response = Invoke-WebRequest -Uri $url -Method Put -Headers $headers -Body $bytes -ContentType "application/octet-stream" -ErrorAction SilentlyContinue
+
+    if($response.StatusCode -eq 201) {
+        Write-Host "File uploaded successfully"
+    } else {
+        Write-Host "File upload failed"
+    }
+
