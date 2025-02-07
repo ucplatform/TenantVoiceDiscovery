@@ -1,2 +1,25 @@
 # TenantVoiceDiscovery
 
+Basic Microsoft Tenant Voice Discovery
+
+Requirements:
+
+Powershell
+MicrosoftTeams Module
+SAS Token from Supplier
+
+Script Output:
+
+CustomerTenant
+TenantActiveUsers
+GlobalVRPExists
+EnterpriseVoiceEnabledUsers
+UsersAssignedVRP
+UsersWithLineURI
+CallingPlanNumbers
+CallingPlanAssigned
+OperatorConnectNumbers
+OperatorConnectAssigned
+CommonAreaPhones
+CallQueues
+AutoAttendants
